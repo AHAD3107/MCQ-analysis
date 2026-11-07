@@ -369,3 +369,4 @@ def get_cognitive_analytics_service() -> CognitiveAnalyticsService:
     if _analytics_instance is None:
         _analytics_instance = CognitiveAnalyticsService()
     return _analytics_instance
+

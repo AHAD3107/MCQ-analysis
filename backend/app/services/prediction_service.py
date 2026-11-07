@@ -205,3 +205,4 @@ def get_prediction_service() -> LogisticRegressionPredictor:
     if _predictor_instance is None:
         _predictor_instance = LogisticRegressionPredictor()
     return _predictor_instance
+
