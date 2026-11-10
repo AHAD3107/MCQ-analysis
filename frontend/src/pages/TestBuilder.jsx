@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, CheckCircle2, Circle, AlertCircle, Upload, Play } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, Circle, AlertCircle, Upload, Play, Bot, Sparkles, GitBranch, Brain } from 'lucide-react';
 import api from '../api/axios';
 
 export default function TestBuilder() {
@@ -14,6 +14,13 @@ export default function TestBuilder() {
   const [bulkText, setBulkText] = useState('');
   const [bulkErrors, setBulkErrors] = useState([]);
   const [isParsing, setIsParsing] = useState(false);
+
+  // Agentic Curriculum & Self-Correcting DAG State
+  const [agentTopic, setAgentTopic] = useState('');
+  const [agentNumQs, setAgentNumQs] = useState(4);
+  const [agentDraft, setAgentDraft] = useState(null);
+  const [isAgentDrafting, setIsAgentDrafting] = useState(false);
+  const [isAgentApproving, setIsAgentApproving] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -187,6 +194,74 @@ export default function TestBuilder() {
     }
   };
 
+  const generateCurriculumDraft = async () => {
+    if (!agentTopic.trim()) {
+      setErrorMsg('Please enter a syllabus topic for the AI Curriculum Agent.');
+      return;
+    }
+    setErrorMsg('');
+    setIsAgentDrafting(true);
+    try {
+      const { data } = await api.post('/agent/teacher/curriculum-draft', {
+        topic: agentTopic.trim(),
+        num_questions: Number(agentNumQs) || 4,
+        difficulty_level: 'Undergraduate'
+      });
+      setAgentDraft(data);
+    } catch (err) {
+      setErrorMsg(err.response?.data?.detail || 'Failed to generate AI curriculum draft.');
+    } finally {
+      setIsAgentDrafting(false);
+    }
+  };
+
+  const approveDagAndLoadQuestions = async () => {
+    if (!agentDraft) return;
+    setErrorMsg('');
+    setIsAgentApproving(true);
+    try {
+      const { data } = await api.post('/agent/teacher/curriculum-approve', {
+        topic: agentDraft.topic,
+        concepts: agentDraft.concepts,
+        validated_edges: agentDraft.validated_edges,
+        draft_questions: agentDraft.draft_questions,
+        create_test: false
+      });
+
+      const updatedConcepts = data.all_concepts || concepts;
+      setConcepts(updatedConcepts);
+      const conceptLookup = {};
+      updatedConcepts.forEach(c => {
+        conceptLookup[c.name.trim().toLowerCase()] = c.id.toString();
+      });
+
+      if (!title.trim()) {
+        setTitle(`${agentDraft.topic} — Diagnostic Assessment`);
+      }
+
+      const loadedQs = (agentDraft.draft_questions || []).map(dq => ({
+        text: dq.text,
+        concept_id: conceptLookup[(dq.concept_name || '').trim().toLowerCase()] || '',
+        concept_name: dq.concept_name,
+        options: dq.options.map(o => ({ text: o.text, is_correct: o.is_correct }))
+      }));
+
+      if (loadedQs.length > 0) {
+        if (questions.length === 1 && !questions[0].text && questions[0].options[0].text === '') {
+          setQuestions(loadedQs);
+        } else {
+          setQuestions(prev => [...prev, ...loadedQs]);
+        }
+      }
+      setAgentDraft(null);
+      setAgentTopic('');
+    } catch (err) {
+      setErrorMsg(err.response?.data?.detail || 'Failed to approve curriculum DAG.');
+    } finally {
+      setIsAgentApproving(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
       <div className="flex justify-between items-center">
@@ -226,6 +301,116 @@ export default function TestBuilder() {
             Add Concept
           </button>
         </div>
+      </div>
+
+      {/* AI Curriculum & Self-Correcting DAG Agent */}
+      <div className="glass-panel p-6 border border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-slate-50 space-y-4">
+        <div className="flex items-start gap-3">
+          <div className="p-2.5 rounded-xl bg-indigo-600 text-white">
+            <Bot className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold text-slate-900">AI Curriculum & Self-Correcting DAG Agent</h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-100 text-indigo-700">
+                NetworkX + Q-Matrix
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Enter a topic to automatically extract prerequisite concepts, verify a cycle-free DAG, and draft multi-skill MCQs for preview.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input
+            type="text"
+            placeholder="e.g. Thermodynamics & Heat Transfer"
+            className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm"
+            value={agentTopic}
+            onChange={e => setAgentTopic(e.target.value)}
+          />
+          <select
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700"
+            value={agentNumQs}
+            onChange={e => setAgentNumQs(e.target.value)}
+          >
+            <option value={3}>3 Questions</option>
+            <option value={4}>4 Questions</option>
+            <option value={5}>5 Questions</option>
+            <option value={6}>6 Questions</option>
+          </select>
+          <button
+            onClick={generateCurriculumDraft}
+            disabled={isAgentDrafting || !agentTopic.trim()}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4" />
+            {isAgentDrafting ? 'Generating Draft...' : 'Draft Curriculum & MCQs'}
+          </button>
+        </div>
+
+        {agentDraft && (
+          <div className="space-y-4 pt-4 border-t border-indigo-100">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-mono font-bold text-slate-600">
+                Engine: {agentDraft.engine_mode} • Topological Order: {agentDraft.topological_order?.join(' → ')}
+              </span>
+              <button
+                onClick={approveDagAndLoadQuestions}
+                disabled={isAgentApproving}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider disabled:opacity-50"
+              >
+                {isAgentApproving ? 'Saving DAG...' : 'Approve DAG & Load Questions into Builder'}
+              </button>
+            </div>
+
+            {agentDraft.cycles_resolved?.length > 0 && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-semibold">
+                Self-Correction Applied: {agentDraft.cycles_resolved.join(' | ')}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3.5 rounded-xl bg-white border border-slate-200 space-y-2">
+                <p className="text-xs font-black uppercase text-slate-500 flex items-center gap-1.5">
+                  <GitBranch className="w-3.5 h-3.5 text-indigo-600" />
+                  Validated Prerequisite Edges ({agentDraft.validated_edges?.length || 0})
+                </p>
+                <ul className="text-xs text-slate-700 space-y-1">
+                  {agentDraft.validated_edges?.map((e, i) => (
+                    <li key={i} className="font-medium">
+                      {e.from_concept} <span className="text-indigo-600 font-bold">→</span> {e.to_concept}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-900 text-slate-100 space-y-1.5 font-mono text-[11px]">
+                <p className="text-indigo-300 font-bold flex items-center gap-1.5">
+                  <Brain className="w-3.5 h-3.5" /> Agent Reasoning Trace
+                </p>
+                {agentDraft.reasoning_trace?.map(st => (
+                  <p key={st.step} className="text-slate-300">
+                    [{st.step}] {st.tool_name}: {st.observation}
+                  </p>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-black uppercase text-slate-500">
+                Drafted Q-Matrix Questions ({agentDraft.draft_questions?.length || 0})
+              </p>
+              {agentDraft.draft_questions?.map((dq, i) => (
+                <div key={i} className="p-3 rounded-xl bg-white border border-slate-200 text-xs space-y-1">
+                  <p className="font-bold text-slate-800">Q{i + 1}. {dq.text}</p>
+                  <p className="text-indigo-600 font-semibold">Skills: {dq.skill_names?.join(', ')}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="glass-panel p-6">

@@ -18,7 +18,11 @@ import {
   ShieldAlert,
   Sparkles,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Bot,
+  Play,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -31,6 +35,13 @@ export default function DiagnosticReport() {
   const [advancedData, setAdvancedData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Agentic AI Tutor State (Draft & Preview)
+  const [agentDraft, setAgentDraft] = useState(null);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentApproving, setAgentApproving] = useState(false);
+  const [agentError, setAgentError] = useState(null);
+  const [showTrace, setShowTrace] = useState(true);
 
   useEffect(() => {
     if (user) {
@@ -79,6 +90,43 @@ export default function DiagnosticReport() {
     if (mastery >= 0.70) return 'bg-emerald-500';
     if (mastery >= 0.40) return 'bg-amber-500';
     return 'bg-rose-500';
+  };
+
+  const runTutorAgent = async (targetConceptId = null) => {
+    if (!user?.id) return;
+    try {
+      setAgentLoading(true);
+      setAgentError(null);
+      const { data } = await api.post(`/agent/student/${user.id}/diagnose-draft`, {
+        target_concept_id: targetConceptId,
+        max_questions: 4
+      });
+      setAgentDraft(data);
+      setShowTrace(true);
+    } catch (err) {
+      console.error("Failed to run AI Tutor Agent:", err);
+      setAgentError(err.response?.data?.detail || "Failed to run AI Tutor Agent.");
+    } finally {
+      setAgentLoading(false);
+    }
+  };
+
+  const approveAndStartQuiz = async () => {
+    if (!agentDraft || !user?.id) return;
+    try {
+      setAgentApproving(true);
+      setAgentError(null);
+      const { data } = await api.post(`/agent/student/${user.id}/approve-quiz`, {
+        title: agentDraft.draft_quiz_title,
+        questions: agentDraft.draft_questions
+      });
+      navigate(`/student/take-test/${data.test_id}`);
+    } catch (err) {
+      console.error("Failed to approve remedial quiz:", err);
+      setAgentError(err.response?.data?.detail || "Failed to launch approved quiz.");
+    } finally {
+      setAgentApproving(false);
+    }
   };
 
   if (loading) {
@@ -184,6 +232,169 @@ export default function DiagnosticReport() {
           </p>
           <p className="text-xs text-slate-500 mt-1">Concepts needing targeted practice</p>
         </div>
+      </div>
+
+      {/* Agentic AI Cognitive Tutor Panel (Draft & Preview + Reasoning Trace) */}
+      <div className="glass-panel p-6 border border-indigo-200 bg-gradient-to-br from-indigo-50/80 via-white to-slate-50 rounded-2xl shadow-sm space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="p-3 rounded-xl bg-indigo-600 text-white shadow-xs">
+              <Bot className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-black text-slate-900">AI Cognitive Tutor Agent</h2>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 border border-indigo-200">
+                  Neuro-Symbolic ReAct Brain
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                Autonomously inspects your DINA mastery, BKT trajectory, response-time effort, chosen distractors, and Prerequisite DAG to draft a personalized remedial check.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => runTutorAgent(null)}
+            disabled={agentLoading}
+            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-bold shadow-xs transition-colors flex items-center gap-2 disabled:opacity-60 self-start md:self-auto"
+          >
+            <Sparkles className="w-4 h-4" />
+            {agentLoading ? 'Reasoning Over Models...' : agentDraft ? 'Re-Run AI Tutor Agent' : 'Run AI Tutor Agent'}
+          </button>
+        </div>
+
+        {agentError && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold">
+            {agentError}
+          </div>
+        )}
+
+        {agentDraft && (
+          <div className="space-y-5 pt-3 border-t border-indigo-100">
+            {/* Engine Mode + Strategy Verdict */}
+            <div className="p-4 rounded-xl bg-white border border-slate-200 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                  Strategy: {agentDraft.strategy_code.replace(/_/g, ' ')}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold bg-slate-100 text-slate-700">
+                  Brain Engine: {agentDraft.engine_mode}
+                </span>
+              </div>
+              <p className="text-sm text-slate-800 leading-relaxed font-medium">
+                {agentDraft.diagnosis_summary}
+              </p>
+
+              {agentDraft.distractor_insights?.length > 0 && (
+                <div className="p-3 rounded-xl bg-rose-50/60 border border-rose-100 space-y-1">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-rose-700">
+                    Distractor Misconception Analysis
+                  </p>
+                  <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+                    {agentDraft.distractor_insights.map((ins, i) => (
+                      <li key={i}>{ins}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {agentDraft.study_coaching?.length > 0 && (
+                <div className="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100 space-y-1">
+                  <p className="text-[11px] font-black uppercase tracking-wider text-emerald-700">
+                    Prescriptive Coaching Steps
+                  </p>
+                  <ul className="list-disc list-inside text-xs text-slate-700 space-y-1">
+                    {agentDraft.study_coaching.map((step, i) => (
+                      <li key={i}>{step}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* Collapsible Live Reasoning Trace */}
+            <div className="rounded-xl border border-slate-200 bg-slate-900 text-slate-100 overflow-hidden">
+              <button
+                onClick={() => setShowTrace(!showTrace)}
+                className="w-full px-4 py-3 flex items-center justify-between text-left bg-slate-800/80 hover:bg-slate-800 transition-colors"
+              >
+                <span className="text-xs font-black uppercase tracking-wider text-indigo-300 flex items-center gap-2">
+                  <Brain className="w-4 h-4" />
+                  Live Reasoning Trace ({agentDraft.reasoning_trace?.length || 0} Steps: Thought → Tool → Observation)
+                </span>
+                {showTrace ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+              </button>
+              {showTrace && (
+                <div className="p-4 space-y-3 text-xs font-mono">
+                  {agentDraft.reasoning_trace?.map((st) => (
+                    <div key={st.step} className="p-3 rounded-lg bg-slate-800/60 border border-slate-700 space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-amber-300 font-bold">
+                          Step {st.step} • Tool: {st.tool_name}
+                        </span>
+                        <span className="text-slate-400">[{st.provider}]</span>
+                      </div>
+                      <p className="text-slate-300">Thought: {st.thought}</p>
+                      <p className="text-emerald-300">Observation: {st.observation}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Draft Remedial Quiz Preview + Human-in-the-Loop Approve Button */}
+            <div className="p-5 rounded-xl bg-white border border-indigo-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600">
+                    Draft & Preview (Not Saved Until Approved)
+                  </span>
+                  <h3 className="text-base font-bold text-slate-900">{agentDraft.draft_quiz_title}</h3>
+                </div>
+                <button
+                  onClick={approveAndStartQuiz}
+                  disabled={agentApproving || !agentDraft.draft_questions?.length}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-xs transition-colors flex items-center gap-2 disabled:opacity-60"
+                >
+                  <Play className="w-4 h-4" />
+                  {agentApproving ? 'Creating Quiz...' : 'Approve & Start Remedial Quiz'}
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {agentDraft.draft_questions?.map((dq, idx) => (
+                  <div key={idx} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-800">
+                        Q{idx + 1}. {dq.text}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase ${
+                          dq.source === 'bank'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-purple-100 text-purple-700'
+                        }`}>
+                          {dq.source === 'bank' ? 'Question Bank' : 'AI Synthesized'}
+                        </span>
+                        {dq.skill_names?.map((sk, sIdx) => (
+                          <span key={sIdx} className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                            {sk}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    {dq.misconception_note && (
+                      <p className="text-[11px] text-slate-500 italic">
+                        Diagnostic Focus: {dq.misconception_note}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Navigation Tabs */}
@@ -296,8 +507,9 @@ export default function DiagnosticReport() {
 
                     <div className="flex items-center gap-3">
                       <button
-                        onClick={() => navigate('/student')}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1"
+                        onClick={() => runTutorAgent(item.concept_id)}
+                        disabled={agentLoading}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-60"
                       >
                         Target This Topic
                         <ArrowRight className="w-3.5 h-3.5" />
