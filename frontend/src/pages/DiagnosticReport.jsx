@@ -1,14 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import PrerequisiteGraph from '../components/PrerequisiteGraph';
 import { 
   Brain, 
   AlertCircle, 
   CheckCircle2, 
-  HelpCircle, 
   BarChart3, 
   ArrowLeft,
-  ChevronRight,
   TrendingDown,
   Info,
   Clock,
@@ -24,15 +23,20 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 export default function DiagnosticReport() {
   const { user } = useAuth();
+  const { studentId: routeStudentId } = useParams();
   const navigate = useNavigate();
+  const isTeacherView = user?.role === 'teacher' && Boolean(routeStudentId);
+  const targetStudentId = routeStudentId ? Number(routeStudentId) : user?.id;
+
   const [activeTab, setActiveTab] = useState('roadmap'); // 'roadmap', 'quadrants', 'dina'
   const [report, setReport] = useState([]);
   const [masteryData, setMasteryData] = useState([]);
   const [advancedData, setAdvancedData] = useState(null);
+  const [conceptGraph, setConceptGraph] = useState({ nodes: [], edges: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -40,42 +44,74 @@ export default function DiagnosticReport() {
   const [agentDraft, setAgentDraft] = useState(null);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentApproving, setAgentApproving] = useState(false);
+  const [agentNotice, setAgentNotice] = useState(null);
   const [agentError, setAgentError] = useState(null);
   const [showTrace, setShowTrace] = useState(true);
 
-  useEffect(() => {
-    if (user) {
-      if (user.id) {
-        fetchData();
-      } else {
-        setError("Invalid user session. Please log out and log in again.");
-        setLoading(false);
-      }
-    }
-  }, [user]);
-
   const fetchData = async () => {
+    if (!targetStudentId) {
+      setError("Invalid user session. Please log out and log in again.");
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
-      const [reportRes, masteryRes, advRes] = await Promise.all([
-        api.get(`/diagnosis/student/${user.id}/report`),
-        api.get(`/diagnosis/student/${user.id}`),
-        api.get(`/diagnosis/student/${user.id}/advanced-analytics`).catch(err => {
+      const [reportRes, masteryRes, advRes, graphRes] = await Promise.all([
+        api.get(`/diagnosis/student/${targetStudentId}/report`),
+        api.get(`/diagnosis/student/${targetStudentId}`),
+        api.get(`/diagnosis/student/${targetStudentId}/advanced-analytics`).catch(err => {
           console.warn("Advanced analytics fallback:", err);
           return { data: null };
-        })
+        }),
+        api.get('/concepts/graph').catch(() => ({ data: { nodes: [], edges: [] } }))
       ]);
       setReport(reportRes.data);
       setMasteryData(masteryRes.data);
       setAdvancedData(advRes.data);
+      setConceptGraph(graphRes.data || { nodes: [], edges: [] });
       setError(null);
     } catch (err) {
       console.error("Failed to fetch diagnostic data:", err);
-      setError("Failed to load your diagnostic report. Please try again later.");
+      setError("Failed to load diagnostic report. Please try again later.");
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const loadDiagnostic = async () => {
+      if (!user) return;
+      if (!targetStudentId) {
+        await Promise.resolve();
+        setError("Invalid user session. Please log out and log in again.");
+        setLoading(false);
+        return;
+      }
+      try {
+        setLoading(true);
+        const [reportRes, masteryRes, advRes, graphRes] = await Promise.all([
+          api.get(`/diagnosis/student/${targetStudentId}/report`),
+          api.get(`/diagnosis/student/${targetStudentId}`),
+          api.get(`/diagnosis/student/${targetStudentId}/advanced-analytics`).catch(err => {
+            console.warn("Advanced analytics fallback:", err);
+            return { data: null };
+          }),
+          api.get('/concepts/graph').catch(() => ({ data: { nodes: [], edges: [] } }))
+        ]);
+        setReport(reportRes.data);
+        setMasteryData(masteryRes.data);
+        setAdvancedData(advRes.data);
+        setConceptGraph(graphRes.data || { nodes: [], edges: [] });
+        setError(null);
+      } catch (err) {
+        console.error("Failed to fetch diagnostic data:", err);
+        setError("Failed to load diagnostic report. Please try again later.");
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadDiagnostic();
+  }, [user, targetStudentId]);
 
   const getReliabilityColor = (tier) => {
     switch (tier) {
@@ -93,11 +129,12 @@ export default function DiagnosticReport() {
   };
 
   const runTutorAgent = async (targetConceptId = null) => {
-    if (!user?.id) return;
+    if (!targetStudentId) return;
     try {
       setAgentLoading(true);
       setAgentError(null);
-      const { data } = await api.post(`/agent/student/${user.id}/diagnose-draft`, {
+      setAgentNotice(null);
+      const { data } = await api.post(`/agent/student/${targetStudentId}/diagnose-draft`, {
         target_concept_id: targetConceptId,
         max_questions: 4
       });
@@ -112,15 +149,20 @@ export default function DiagnosticReport() {
   };
 
   const approveAndStartQuiz = async () => {
-    if (!agentDraft || !user?.id) return;
+    if (!agentDraft || !targetStudentId) return;
     try {
       setAgentApproving(true);
       setAgentError(null);
-      const { data } = await api.post(`/agent/student/${user.id}/approve-quiz`, {
+      setAgentNotice(null);
+      const { data } = await api.post(`/agent/student/${targetStudentId}/approve-quiz`, {
         title: agentDraft.draft_quiz_title,
         questions: agentDraft.draft_questions
       });
-      navigate(`/student/take-test/${data.test_id}`);
+      if (isTeacherView) {
+        setAgentNotice(`Assigned "${data.title}" (${data.question_count} questions) to Student #${targetStudentId}.`);
+      } else {
+        navigate(`/student/take-test/${data.test_id}`);
+      }
     } catch (err) {
       console.error("Failed to approve remedial quiz:", err);
       setAgentError(err.response?.data?.detail || "Failed to launch approved quiz.");
@@ -128,6 +170,40 @@ export default function DiagnosticReport() {
       setAgentApproving(false);
     }
   };
+
+  const studentGraphData = useMemo(() => {
+    const masteryById = new Map();
+    (masteryData || []).forEach(m => {
+      masteryById.set(String(m.concept_id), m.adjusted_mastery);
+    });
+    const roadmapList = advancedData?.prerequisite_debt_report?.remediation_roadmap || [];
+    const rootBlockerIds = new Set(
+      roadmapList
+        .filter(item => item.is_root_blocker)
+        .map(item => String(item.concept_id))
+    );
+
+    const nodes = (conceptGraph?.nodes || []).map(n => {
+      const id = String(n.id);
+      return {
+        id,
+        conceptId: n.id,
+        label: n.name,
+        mastery: masteryById.has(id) ? masteryById.get(id) : null,
+        isRootBlocker: rootBlockerIds.has(id),
+      };
+    });
+
+    const edges = (conceptGraph?.edges || []).map(e => ({
+      id: `edge-${e.id}`,
+      from: String(e.from_concept_id),
+      to: String(e.to_concept_id),
+      confidence: e.confidence ?? 0.85,
+      reasoning: e.source ? `Source: ${e.source}` : '',
+    }));
+
+    return { nodes, edges };
+  }, [conceptGraph, masteryData, advancedData]);
 
   if (loading) {
     return (
@@ -164,16 +240,16 @@ export default function DiagnosticReport() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <button 
-            onClick={() => navigate('/student')}
+            onClick={() => navigate(isTeacherView ? -1 : '/student')}
             className="flex items-center text-slate-500 hover:text-indigo-600 mb-2 transition-colors group text-sm font-semibold"
           >
             <ArrowLeft className="w-4 h-4 mr-1 group-hover:-translate-x-1 transition-transform" />
-            Back to Dashboard
+            {isTeacherView ? 'Back to Class Results' : 'Back to Dashboard'}
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="text-3xl md:text-4xl font-black text-slate-900 tracking-tight flex items-center gap-3">
               <Brain className="w-10 h-10 text-indigo-600" />
-              Cognitive Diagnostic Dossier
+              {isTeacherView ? `Student #${targetStudentId} Diagnostic Dossier` : 'Cognitive Diagnostic Dossier'}
             </h1>
             <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 border border-indigo-200">
               Tri-Model AI Active
@@ -270,6 +346,12 @@ export default function DiagnosticReport() {
           </div>
         )}
 
+        {agentNotice && (
+          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+            {agentNotice}
+          </div>
+        )}
+
         {agentDraft && (
           <div className="space-y-5 pt-3 border-t border-indigo-100">
             {/* Engine Mode + Strategy Verdict */}
@@ -358,7 +440,9 @@ export default function DiagnosticReport() {
                   className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-xs transition-colors flex items-center gap-2 disabled:opacity-60"
                 >
                   <Play className="w-4 h-4" />
-                  {agentApproving ? 'Creating Quiz...' : 'Approve & Start Remedial Quiz'}
+                  {agentApproving
+                    ? (isTeacherView ? 'Assigning Quiz...' : 'Creating Quiz...')
+                    : (isTeacherView ? 'Approve & Assign Remedial Quiz' : 'Approve & Start Remedial Quiz')}
                 </button>
               </div>
 
@@ -458,6 +542,20 @@ export default function DiagnosticReport() {
             </div>
           </div>
 
+          {studentGraphData.nodes.length > 0 && (
+            <PrerequisiteGraph
+              nodes={studentGraphData.nodes}
+              edges={studentGraphData.edges}
+              mode="mastery"
+              title="Interactive Concept Mastery & Prerequisite Network Graph"
+              subtitle="Nodes are sized by dependency hub impact and colored by live DINA mastery state. Click any concept to inspect blockers or target it with the AI Tutor."
+              height={440}
+              onNodeAction={(conceptId) => runTutorAgent(conceptId)}
+              actionLabel="Target This Topic"
+              actionDisabled={agentLoading}
+            />
+          )}
+
           {!roadmapData || roadmapData.remediation_roadmap.length === 0 ? (
             <div className="glass-panel p-12 text-center bg-white/80">
               <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
@@ -468,7 +566,7 @@ export default function DiagnosticReport() {
             </div>
           ) : (
             <div className="space-y-4">
-              {roadmapData.remediation_roadmap.map((item, idx) => (
+              {roadmapData.remediation_roadmap.map((item) => (
                 <div 
                   key={item.concept_id}
                   className={`glass-panel p-6 border transition-all ${

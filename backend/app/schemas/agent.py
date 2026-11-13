@@ -72,6 +72,7 @@ class TeacherCurriculumRequest(BaseModel):
     topic: str = Field(..., min_length=2)
     num_questions: int = Field(default=5, ge=1, le=12)
     difficulty_level: str = "Undergraduate"
+    syllabus_context: str = ""
 
 
 class TeacherCurriculumDraftResponse(BaseModel):

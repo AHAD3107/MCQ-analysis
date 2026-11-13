@@ -84,6 +84,7 @@ async def generate_teacher_curriculum_draft(
         num_questions=req.num_questions,
         difficulty_level=req.difficulty_level,
         db=db,
+        syllabus_context=req.syllabus_context,
     )
 
 

@@ -883,6 +883,7 @@ Return ONLY valid JSON:
         num_questions: int,
         difficulty_level: str,
         db: AsyncSession,
+        syllabus_context: str = "",
     ) -> TeacherCurriculumDraftResponse:
         trace: List[ReasoningStep] = []
 
@@ -891,11 +892,18 @@ Return ONLY valid JSON:
         existing_concepts = c_res.scalars().all()
         existing_by_lower = {c.name.strip().lower(): c for c in existing_concepts}
 
+        notes_excerpt = (syllabus_context or "").strip()[:4000]
+        context_block = (
+            f"\nTeacher-provided syllabus / lecture notes (ground all concepts and MCQs strictly in these notes when relevant):\n\"\"\"\n{notes_excerpt}\n\"\"\"\n"
+            if notes_excerpt
+            else ""
+        )
+
         prompt = f"""
 Design a structured micro-curriculum and diagnostic MCQ set for the topic: "{topic}" ({difficulty_level} level).
 Existing concepts in database (reuse exact names when relevant):
 {json.dumps([c.name for c in existing_concepts])}
-
+{context_block}
 Return ONLY valid JSON:
 {{
   "concepts": [
@@ -1468,23 +1476,43 @@ Return ONLY valid JSON:
             await db.flush()
 
             correct_opt_id = None
+            first_opt_id = None
             for opt in dq.options:
                 new_opt = Option(question_id=new_q.id, text=opt.text.strip())
                 db.add(new_opt)
                 await db.flush()
+                if first_opt_id is None:
+                    first_opt_id = new_opt.id
                 if opt.is_correct and correct_opt_id is None:
                     correct_opt_id = new_opt.id
-            new_q.correct_option_id = correct_opt_id
+            new_q.correct_option_id = correct_opt_id or first_opt_id
+
+            inserted_skills = set()
+            if primary_cid:
+                await db.execute(
+                    pg_insert(QuestionSkill)
+                    .values(
+                        question_id=new_q.id,
+                        concept_id=primary_cid,
+                        is_primary=True,
+                        source="agent_intervention",
+                        llm_confidence=0.90,
+                    )
+                    .on_conflict_do_nothing(
+                        index_elements=["question_id", "concept_id"]
+                    )
+                )
+                inserted_skills.add(primary_cid)
 
             for s_name in dq.skill_names:
                 s_obj = by_name.get(s_name.strip().lower())
-                if s_obj:
+                if s_obj and s_obj.id not in inserted_skills:
                     await db.execute(
                         pg_insert(QuestionSkill)
                         .values(
                             question_id=new_q.id,
                             concept_id=s_obj.id,
-                            is_primary=(s_obj.id == primary_cid),
+                            is_primary=(len(inserted_skills) == 0),
                             source="agent_intervention",
                             llm_confidence=0.90,
                         )
@@ -1492,6 +1520,7 @@ Return ONLY valid JSON:
                             index_elements=["question_id", "concept_id"]
                         )
                     )
+                    inserted_skills.add(s_obj.id)
 
         unique_sids = list(dict.fromkeys(req.student_ids))
         for sid in unique_sids:

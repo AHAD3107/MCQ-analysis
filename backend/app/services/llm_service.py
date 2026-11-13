@@ -348,9 +348,8 @@ Questions:
                             source="llm_inferred",
                             llm_confidence=conf,
                         )
-                        .on_conflict_do_update(
-                            index_elements=["question_id", "concept_id"],
-                            set_=dict(llm_confidence=conf, source="llm_inferred"),
+                        .on_conflict_do_nothing(
+                            index_elements=["question_id", "concept_id"]
                         )
                     )
                     await db.execute(stmt_upsert)
